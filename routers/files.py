@@ -959,4 +959,61 @@ async def get_file_annotations(
         raise
     except Exception as e:
         logger.error(f"Error getting file annotations: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/{file_id}/objects")
+async def get_file_objects(
+    file_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get object annotations for a specific file"""
+    try:
+        # Get the file
+        file = await file_service.get_file_by_id(file_id, db)
+        if not file:
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        # Check if user has access to this file's project
+        if file.project_id:
+            project_service = ProjectService(db)
+            project = await project_service.get_project_by_id(str(file.project_id), current_user.id)
+            if not project or project.owner_id != current_user.id:
+                raise HTTPException(status_code=403, detail="Access denied")
+        
+        # Query object annotations specifically
+        stmt = select(Annotation).where(
+            Annotation.file_id == file.id,
+            Annotation.annotation_type == 'object_detection'
+        )
+        
+        result = await db.execute(stmt)
+        annotations = result.scalars().all()
+        
+        # Format annotations for frontend
+        formatted_annotations = []
+        for annotation in annotations:
+            formatted_annotations.append({
+                "id": str(annotation.id),
+                "annotation_type": annotation.annotation_type,
+                "coordinates": annotation.coordinates,
+                "properties": annotation.properties,
+                "label": annotation.label,
+                "created_by_ai": annotation.created_by_ai,
+                "ai_agent": annotation.ai_agent,
+                "confidence_score": annotation.confidence_score,
+                "created_at": annotation.created_at.isoformat() if annotation.created_at else None
+            })
+        
+        return {
+            "success": True,
+            "file_id": file_id,
+            "objects": formatted_annotations,
+            "total_count": len(formatted_annotations)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting file objects: {e}")
         raise HTTPException(status_code=500, detail="Internal server error") 

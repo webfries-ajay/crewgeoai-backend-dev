@@ -8,6 +8,15 @@ from pathlib import Path
 import math
 from dotenv import load_dotenv
 import json
+from backend.services.geoai.categories import (
+    agriculture_analyzer,
+    construction_analyzer,
+    forestry_analyzer,
+    mining_analyzer,
+    solar_analyzer,
+    urban_planning_analyzer,
+    wind_mills_analyzer
+)
 
 class TIFFChunker:
     """Handles chunking of large TIFF files into manageable pieces"""
@@ -404,9 +413,8 @@ Please provide a detailed description of this section."""
         """Combine chunk results using category-specific logic"""
         print(f"🔗 Combining {self.category} analysis results...")
         
-        # Check if category analyzer has custom combination method
-        if hasattr(category_analyzer, 'combine_defect_results') and self.category == "wind_mills":
-            # Use wind mills specific defect combination
+        # Use category-specific defect combination if available
+        if hasattr(category_analyzer, 'combine_defect_results'):
             return category_analyzer.combine_defect_results(chunk_results, original_query)
         
         # Use enhanced counting logic for any counting query
@@ -644,8 +652,29 @@ Keep it very concise and direct."""
         
         return base64_str
     
-    def analyze_image(self, file_path: str, query: str, category_analyzer) -> str:
+    def analyze_image(self, file_path: str, query: str, category: str) -> str:
         """Main function to analyze image with category-specific LLM analysis"""
+        # Select the correct analyzer for the category
+        if category == "agriculture":
+            category_analyzer = agriculture_analyzer
+        elif category == "construction":
+            category_analyzer = construction_analyzer
+        elif category == "forestry":
+            category_analyzer = forestry_analyzer
+        elif category == "mining":
+            category_analyzer = mining_analyzer
+        elif category == "solar":
+            category_analyzer = solar_analyzer
+        elif category == "urban_planning":
+            category_analyzer = urban_planning_analyzer
+        elif category == "wind_mills":
+            category_analyzer = wind_mills_analyzer
+        else:
+            category_analyzer = None
+
+        if category_analyzer is None:
+            return f"❌ Category '{category}' not found or does not have an analyzer."
+
         try:
             # Validate and get file info
             self.validate_file(file_path)
@@ -699,7 +728,7 @@ Be extremely thorough - count every single vehicle visible in the image."""
                 
                 # Send to OpenAI
                 print(f"🤖 Sending to {self.model} with {max_tokens} max tokens...")
-                print(f"📝 Query type: {self.category.title()} {'Category-Specific' if is_category_query else 'Standard'} Analysis")
+                print(f"📝 Query type: {category.title()} {'Category-Specific' if is_category_query else 'Standard'} Analysis")
                 
                 response = self.client.chat.completions.create(
                     model=self.model,

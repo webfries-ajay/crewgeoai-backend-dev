@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -18,6 +18,8 @@ from schemas.user import (
     TokenRefresh,
     PasswordChange,
     PasswordReset,
+    ForgotPasswordRequest,
+    ResetPasswordRequest,
     AdminUserUpdate
 )
 
@@ -462,6 +464,172 @@ async def request_password_reset(
         return {
             "message": "If the email exists in our system, you will receive password reset instructions."
         }
+
+@router.post("/forgot-password")
+async def forgot_password(
+    forgot_data: ForgotPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Forgot password - verify email exists
+    """
+    try:
+        # Check if user exists
+        stmt = select(User).where(User.email == forgot_data.email)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Email not found in our system"
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account is deactivated"
+            )
+        
+        logger.info(f"Forgot password request for: {forgot_data.email}")
+        
+        return {
+            "message": "Email verified successfully. You can now reset your password.",
+            "email": forgot_data.email
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during forgot password request: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Forgot password request failed"
+        )
+
+@router.post("/reset-password")
+async def reset_password(
+    reset_data: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Reset password with new password
+    """
+    try:
+        # Check if user exists
+        stmt = select(User).where(User.email == reset_data.email)
+        result = await db.execute(stmt)
+        user = result.scalar_one_or_none()
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Email not found in our system"
+            )
+        
+        if not user.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Account is deactivated"
+            )
+        
+        # Set new password
+        user.set_password(reset_data.new_password)
+        
+        # Revoke all existing refresh tokens for security
+        await security.revoke_all_user_tokens(db, user.id)
+        
+        await db.commit()
+        
+        logger.info(f"Password reset for user: {user.email}")
+        
+        return {
+            "message": "Password reset successfully. Please log in with your new password."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during password reset: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Password reset failed"
+        )
+
+@router.post("/upload-avatar")
+async def upload_avatar(
+    avatar: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Upload user avatar
+    """
+    try:
+        # Validate file type
+        if not avatar.content_type or not avatar.content_type.startswith('image/'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Only image files are allowed"
+            )
+        
+        # Validate file size (max 5MB)
+        if avatar.size and avatar.size > 5 * 1024 * 1024:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File size must be less than 5MB"
+            )
+        
+        # For now, we'll just return a placeholder URL
+        # In a real implementation, you would save the file to storage
+        avatar_url = f"/static/avatars/{current_user.id}.jpg"
+        
+        # Update user avatar URL
+        current_user.avatar_url = avatar_url
+        await db.commit()
+        
+        logger.info(f"Avatar uploaded for user: {current_user.email}")
+        
+        return {"avatar_url": avatar_url}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading avatar: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Avatar upload failed"
+        )
+
+@router.delete("/delete-account")
+async def delete_account(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete current user account
+    """
+    try:
+        # Revoke all tokens first
+        await security.revoke_all_user_tokens(db, current_user.id)
+        
+        # Delete user account
+        await db.delete(current_user)
+        await db.commit()
+        
+        logger.info(f"Account deleted: {current_user.email}")
+        
+        return {"message": "Account deleted successfully"}
+        
+    except Exception as e:
+        logger.error(f"Error deleting account: {e}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Account deletion failed"
+        )
 
 # Admin routes
 @router.get("/admin/users", response_model=list[UserResponse])

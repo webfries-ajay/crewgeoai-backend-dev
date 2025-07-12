@@ -218,28 +218,14 @@ Please use this metadata context to provide more accurate and detailed analysis 
             
             for i, (file_id, file_info) in enumerate(self.selected_file_paths.items(), 1):
                 yield f"📸 **Image {i}/{len(self.selected_file_paths)}: {file_info['filename']}**\n"
-                
-                # Get metadata context for this image
-                metadata_context = ""
-                if file_id in self.selected_file_metadata and self.selected_file_metadata[file_id]:
-                    metadata = self.selected_file_metadata[file_id]
-                    metadata_context = self._format_metadata_context(metadata, file_info['filename'])
-                    yield f"📋 **Metadata Context:**\n{metadata_context}\n\n"
-                
-                enhanced_question = f"""Multi-image analysis ({i}/{len(self.selected_file_paths)}): {file_info['filename']}
-
-{question}
-
-Please provide detailed analysis for this specific image, keeping in mind this is part of a multi-image comparison."""
-                
+                # (REMOVED) Metadata context output
+                # Only show image name and count
+                enhanced_question = f"""Multi-image analysis ({i}/{len(self.selected_file_paths)}): {file_info['filename']}\n\n{question}\n\nPlease provide detailed analysis for this specific image, keeping in mind this is part of a multi-image comparison."""
                 async for chunk in self.analyze_image(file_info['path'], enhanced_question):
                     yield chunk
-                
                 if i < len(self.selected_file_paths):
                     yield "\n\n---\n\n"
-            
             yield f"\n\n🎯 **MULTI-IMAGE ANALYSIS COMPLETE**\nAnalyzed {len(self.selected_file_paths)} images successfully!"
-            
         except Exception as e:
             print(f"❌ Error in multi-image analysis: {str(e)}")
             yield f"❌ Error analyzing multiple images: {str(e)}"
