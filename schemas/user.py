@@ -189,6 +189,42 @@ class PasswordReset(BaseModel):
             }
         }
 
+class ForgotPasswordRequest(BaseModel):
+    """Schema for forgot password request"""
+    email: EmailStr = Field(..., description="User email address")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "user@example.com"
+            }
+        }
+
+class ResetPasswordRequest(BaseModel):
+    """Schema for reset password request"""
+    email: EmailStr = Field(..., description="User email address")
+    new_password: str = Field(..., min_length=8, max_length=100, description="New password")
+    
+    @validator('new_password')
+    def validate_new_password(cls, v):
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters long')
+        if not re.search(r'[A-Za-z]', v):
+            raise ValueError('Password must contain at least one letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one number')
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
+            raise ValueError('Password must contain at least one special character')
+        return v
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "email": "user@example.com",
+                "new_password": "NewSecurePass456!"
+            }
+        }
+
 class AdminUserUpdate(UserUpdate):
     """Schema for admin user updates with additional privileges"""
     role: Optional[UserRole] = Field(None, description="User role")

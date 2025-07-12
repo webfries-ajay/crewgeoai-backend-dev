@@ -27,6 +27,15 @@ class DefectDetection:
     description: str
     severity: str  # "low", "medium", "high", "critical"
 
+@dataclass
+class ObjectDetection:
+    """Data class for general object detection results"""
+    object_type: str
+    confidence: float
+    bounding_box: Dict[str, int]  # {x, y, width, height}
+    description: str
+    category: str  # "building", "vehicle", "vegetation", "infrastructure", etc.
+
 class TIFFChunker:
     """Handles chunking of large TIFF files into manageable pieces"""
     
@@ -334,17 +343,49 @@ When metadata context is provided and the user asks for metadata or technical in
 5. Use the exact values provided in the metadata context
 6. THEN provide visual analysis as additional context
 
+🔍 SMART OBJECT DETECTION FOR GENERAL ANALYSIS:
+When analyzing images for general purposes (not specifically defect detection), I should identify and provide bounding boxes for major objects to help users visualize what I'm talking about:
+
+OBJECT DETECTION GUIDELINES:
+- For general questions about images, identify and locate major objects/features
+- Focus on relevant objects mentioned in the analysis (buildings, vehicles, structures, etc.)
+- Provide precise bounding box coordinates for objects I discuss
+- Categories include: building, vehicle, vegetation, infrastructure, water, road, equipment, etc.
+- Only detect objects that are clearly visible and relevant to the analysis
+- Provide descriptions that connect to the user's question
+
+COORDINATE ACCURACY FOR OBJECTS:
+- Use the same precision as defect detection
+- Coordinates must match where the object appears in the image
+- Test coordinates against image dimensions before providing
+
+At the END of my response for general analysis, if I identify significant objects, I'll include:
+
+---OBJECT_DATA_START---
+[
+  {
+    "object_type": "house",
+    "confidence": 0.92,
+    "bounding_box": {"x": 120, "y": 340, "width": 45, "height": 35},
+    "description": "Two-story residential house with red roof",
+    "category": "building"
+  }
+]
+---OBJECT_DATA_END---
+
+If no significant objects to highlight: []
+
 Remember: You're not just analyzing images - you're having a friendly, educational conversation with someone who's curious about their world. Make every interaction delightful, informative, and engaging! 🌟
 
 Always adapt your analysis based on what you actually observe in the image, not predetermined categories. Let the image content guide your expertise and focus areas, but deliver it all with genuine enthusiasm and care for helping the user learn and discover amazing insights! 🚀"""
 
-    def _create_defect_detection_prompt(self, original_query: str, img_width: int, img_height: int) -> str:
-        """Create specialized prompt for defect detection"""
-        return f"""You are Alex, an enthusiastic GeoAI specialist who absolutely loves helping with defect detection! 🔍✨
+    def _create_unified_analysis_prompt(self, original_query: str, img_width: int, img_height: int) -> str:
+        """Create unified prompt for both object detection and defect detection in a single analysis"""
+        return f"""You are Alex, an enthusiastic GeoAI specialist who absolutely loves comprehensive image analysis! 🔍✨
 
 {self.master_prompt}
 
-🎯 SPECIAL DEFECT DETECTION MISSION:
+🎯 UNIFIED ANALYSIS MISSION:
 User's Question: {original_query}
 
 🖼️ CRITICAL IMAGE INFORMATION:
@@ -353,11 +394,14 @@ User's Question: {original_query}
 - X increases from LEFT to RIGHT (0 to {img_width})
 - Y increases from TOP to BOTTOM (0 to {img_height})
 
-🔍 PRECISE DETECTION REQUIREMENTS:
-I need you to be EXTREMELY ACCURATE with coordinate detection. When you identify a defect:
+🔍 COMPREHENSIVE DETECTION REQUIREMENTS:
+I need you to perform BOTH object detection AND defect detection in a single comprehensive analysis. Be EXTREMELY ACCURATE with coordinate detection for both types of findings.
 
-1. **CAREFULLY examine the image** - Look at the EXACT pixel location where you see the defect
-2. **Estimate coordinates precisely** - Think about where the defect appears:
+📍 COORDINATE ACCURACY RULES:
+When you identify ANY object or defect:
+
+1. **CAREFULLY examine the image** - Look at the EXACT pixel location where you see the item
+2. **Estimate coordinates precisely** - Think about where the item appears:
    - If it's on the left half: X should be 0 to {img_width//2}
    - If it's on the right half: X should be {img_width//2} to {img_width}
    - If it's in the top half: Y should be 0 to {img_height//2}
@@ -365,17 +409,44 @@ I need you to be EXTREMELY ACCURATE with coordinate detection. When you identify
 
 3. **Double-check your coordinates** - Before providing coordinates, verify they make sense:
    - Center of image would be around ({img_width//2}, {img_height//2})
-   - A defect in the bottom-right would be around ({int(img_width*0.8)}, {int(img_height*0.8)})
-   - A defect in the top-left would be around ({int(img_width*0.2)}, {int(img_height*0.2)})
+   - An item in the bottom-right would be around ({int(img_width*0.8)}, {int(img_height*0.8)})
+   - An item in the top-left would be around ({int(img_width*0.2)}, {int(img_height*0.2)})
 
-🎯 ANALYSIS APPROACH:
+🎯 DUAL ANALYSIS APPROACH:
 1. First, I'll provide my usual enthusiastic, detailed analysis
-2. Then, I'll give you PRECISE technical defect data with ACCURATE coordinates
+2. Then, I'll give you PRECISE technical data for BOTH objects and defects with ACCURATE coordinates
 
-For ANY defects I find, I MUST provide precise bounding box coordinates that EXACTLY match the visual location in the image.
+🔍 WHAT TO DETECT:
 
-At the END of my response, I'll include a special section with this EXACT format:
+**GENERAL OBJECTS** (for any analysis):
+- Buildings, vehicles, equipment, infrastructure, vegetation, etc.
+- Anything relevant to the user's question or general scene understanding
+- Focus on objects that help answer the user's query
 
+**DEFECTS & ANOMALIES** (always check for these):
+- Cracks, corrosion, holes, gaps, discoloration, staining
+- Wear, deformation, missing components, surface damage
+- Water damage, structural issues, safety hazards
+- Any visible problems or maintenance issues
+
+⚠️ IMPORTANT: I must provide coordinates for BOTH object types when I find them!
+
+At the END of my response, I'll include TWO special sections with these EXACT formats:
+
+**FOR GENERAL OBJECTS:**
+---OBJECT_DATA_START---
+[
+  {{
+    "object_type": "building",
+    "confidence": 0.92,
+    "bounding_box": {{"x": 120, "y": 340, "width": 45, "height": 35}},
+    "description": "Two-story residential house with red roof",
+    "category": "building"
+  }}
+]
+---OBJECT_DATA_END---
+
+**FOR DEFECTS:**
 ---DEFECT_DATA_START---
 [
   {{
@@ -388,24 +459,31 @@ At the END of my response, I'll include a special section with this EXACT format
 ]
 ---DEFECT_DATA_END---
 
-📍 COORDINATE ACCURACY IS CRITICAL - The user will see red boxes overlaid on the image at these exact coordinates!
+📍 COORDINATE ACCURACY IS CRITICAL - The user will see colored boxes overlaid on the image at these exact coordinates!
+- Red boxes for defects
+- Blue boxes for general objects
 
+You can add multiple objects and defects to the list.
+
+If no objects found: []
 If no defects found: []
 
-Common defect types: cracks, corrosion, holes, gaps, discoloration, staining, wear, deformation, missing_components, surface_damage, water_damage, structural_issues
+🎨 DETECTION CATEGORIES:
+**Object Categories**: building, vehicle, vegetation, infrastructure, water, road, equipment, etc.
+**Defect Types**: cracks, corrosion, holes, gaps, discoloration, staining, wear, deformation, missing_components, surface_damage, water_damage, structural_issues
+**Severity Levels**: low, medium, high, critical
+You can add more as per your knowledge and experience.
 
-Now let me analyze your image with excitement and precision! 🚀"""
+🚀 ANALYSIS STRATEGY:
+1. Answer the user's specific question with enthusiasm
+2. Identify and locate all relevant objects in the scene
+3. Simultaneously scan for any defects or anomalies
+4. Provide precise coordinates for everything I find
+5. Maintain my friendly, conversational tone throughout
 
-    def _is_defect_detection_query(self, query: str) -> bool:
-        """Check if query is asking for defect detection"""
-        defect_keywords = [
-            'defect', 'damage', 'crack', 'issue', 'problem', 'broken', 'fault', 
-            'deterioration', 'wear', 'corrosion', 'rust', 'hole', 'gap', 
-            'stain', 'discolor', 'deform', 'missing', 'surface damage',
-            'structural issue', 'anomaly', 'flaw', 'imperfection'
-        ]
-        query_lower = query.lower()
-        return any(keyword in query_lower for keyword in defect_keywords)
+This unified approach ensures I never miss important details and can provide comprehensive insights in a single analysis! Now let me analyze your image with excitement and precision! 🚀"""
+
+    # Removed _is_defect_detection_query_llm - now using unified analysis for all queries
     
     def _extract_defect_data(self, response_text: str, img_width: int, img_height: int) -> List[DefectDetection]:
         """Extract defect data from AI response"""
@@ -526,6 +604,135 @@ Now let me analyze your image with excitement and precision! 🚀"""
                 
         except Exception as e:
             print(f"Error storing defect annotations: {e}")
+
+    def _extract_object_data(self, response_text: str, img_width: int, img_height: int) -> List[ObjectDetection]:
+        """Extract general object data from AI response"""
+        try:
+            # Find the object data section
+            start_marker = "---OBJECT_DATA_START---"
+            end_marker = "---OBJECT_DATA_END---"
+            
+            start_idx = response_text.find(start_marker)
+            end_idx = response_text.find(end_marker)
+            
+            if start_idx == -1 or end_idx == -1:
+                return []
+            
+            # Extract JSON data
+            json_start = start_idx + len(start_marker)
+            json_data = response_text[json_start:end_idx].strip()
+            
+            # Parse JSON
+            object_list = json.loads(json_data)
+            
+            # Convert to ObjectDetection objects with validation
+            objects = []
+            for item in object_list:
+                if not all(key in item for key in ['object_type', 'confidence', 'bounding_box', 'description', 'category']):
+                    continue
+                
+                bbox = item['bounding_box']
+                if not all(key in bbox for key in ['x', 'y', 'width', 'height']):
+                    continue
+                
+                # Validate and clamp coordinates
+                x = max(0, min(int(bbox['x']), img_width))
+                y = max(0, min(int(bbox['y']), img_height))
+                width = max(1, min(int(bbox['width']), img_width - x))
+                height = max(1, min(int(bbox['height']), img_height - y))
+                
+                validated_bbox = {'x': x, 'y': y, 'width': width, 'height': height}
+                
+                print(f"🔍 Extracting object: {item['object_type']}")
+                print(f"   📍 Raw coordinates: {bbox}")
+                print(f"   ✅ Validated coordinates: {validated_bbox}")
+                print(f"   🖼️ Image dimensions: {img_width}x{img_height}")
+                
+                object_detection = ObjectDetection(
+                    object_type=item['object_type'],
+                    confidence=float(item['confidence']),
+                    bounding_box=validated_bbox,
+                    description=item['description'],
+                    category=item['category']
+                )
+                objects.append(object_detection)
+            
+            return objects
+            
+        except (json.JSONDecodeError, KeyError, ValueError) as e:
+            print(f"Error extracting object data: {e}")
+            return []
+
+    def _clean_response_text_all(self, response_text: str) -> str:
+        """Remove both defect and object data sections from user-visible response"""
+        # Remove defect data
+        response_text = self._clean_response_text(response_text)
+        
+        # Remove object data
+        start_marker = "---OBJECT_DATA_START---"
+        start_idx = response_text.find(start_marker)
+        
+        if start_idx != -1:
+            response_text = response_text[:start_idx].strip()
+        
+        return response_text
+
+    async def _store_object_annotations(self, file_path: str, objects: List[ObjectDetection]) -> None:
+        """Store object annotations in database"""
+        try:
+            from sqlalchemy import select, delete
+            from core.database import get_db
+            from models import File, Annotation
+            
+            async for db in get_db():
+                # Find file by path
+                file_stmt = select(File).where(File.file_path == str(file_path))
+                file_result = await db.execute(file_stmt)
+                file_record = file_result.scalar_one_or_none()
+                
+                if not file_record:
+                    print(f"File not found in database: {file_path}")
+                    return
+                
+                # Clear existing object annotations
+                delete_stmt = delete(Annotation).where(
+                    Annotation.file_id == file_record.id,
+                    Annotation.annotation_type == 'object_detection'
+                )
+                await db.execute(delete_stmt)
+                
+                # Store new annotations
+                for obj in objects:
+                    annotation = Annotation(
+                        file_id=file_record.id,
+                        user_id=self.user_id if self.user_id else file_record.user_id,
+                        annotation_type='object_detection',
+                        coordinates={
+                            'type': 'bounding_box',
+                            'x': obj.bounding_box['x'],
+                            'y': obj.bounding_box['y'],
+                            'width': obj.bounding_box['width'],
+                            'height': obj.bounding_box['height']
+                        },
+                        properties={
+                            'object_type': obj.object_type,
+                            'confidence': obj.confidence,
+                            'category': obj.category,
+                            'description': obj.description
+                        },
+                        label=f"{obj.object_type} ({obj.category})",
+                        created_by_ai=True,
+                        ai_agent='object_detector',
+                        confidence_score=obj.confidence
+                    )
+                    db.add(annotation)
+                
+                await db.commit()
+                print(f"Stored {len(objects)} object annotations for file {file_record.id}")
+                break
+                
+        except Exception as e:
+            print(f"Error storing object annotations: {e}")
     
     def validate_file(self, file_path: str) -> bool:
         """Validate if file exists and is supported format"""
@@ -957,138 +1164,176 @@ Remember to stay true to my personality - be super friendly, appreciative, and a
                 best_page = i
         
         return best_page
-    
+
     async def analyze_image_stream(self, file_path: str, query: str) -> AsyncIterator[str]:
         """Main function to analyze image with intelligent detection, defect detection, and streaming"""
         try:
             # Validate and get file info
             self.validate_file(file_path)
             file_info = self.get_file_info(file_path)
-            
-            print(f"📸 Original Image Info: {file_info['size'][0]}x{file_info['size'][1]}, "
-                  f"{file_info['format']}, {file_info['file_size_mb']:.1f} MB")
-            
+
+            print(
+                f"📸 Original Image Info: {file_info['size'][0]}x{file_info['size'][1]}, "
+                f"{file_info['format']}, {file_info['file_size_mb']:.1f} MB"
+            )
+
             original_img_width, original_img_height = file_info['size']
-            
-            # Check if this is a defect detection query
-            is_defect_query = self._is_defect_detection_query(query)
-            
+
+            # Note: Using unified analysis that handles both objects and defects
+
             # Get conversation history for context
             chat_history = self.memory.chat_memory.messages if hasattr(self.memory, 'chat_memory') else []
-            
+
             # Process the image to get actual dimensions used by AI
             if file_info['needs_chunking']:
                 print("🧩 Using chunking strategy for very large image with streaming support")
                 # For chunked analysis, use original dimensions since chunks are from original image
                 processed_img_width, processed_img_height = original_img_width, original_img_height
-                analysis_prompt = self._create_defect_detection_prompt(query, processed_img_width, processed_img_height) if is_defect_query else self._create_intelligent_master_prompt()
-                
+                analysis_prompt = (
+                    self._create_unified_analysis_prompt(query, processed_img_width, processed_img_height)
+                )
+
                 async for chunk in self.analyze_image_with_chunking_context(file_path, query, analysis_prompt):
                     yield chunk
             else:
                 print("📱 Processing complete image for intelligent analysis with streaming")
                 processed_image = self.process_regular_image(file_path)
                 processed_img_width, processed_img_height = processed_image.size
-                
+
                 print(f"🔄 Processed Image Info: {processed_img_width}x{processed_img_height}")
-                print(f"📏 Scale factors: X={processed_img_width/original_img_width:.3f}, Y={processed_img_height/original_img_height:.3f}")
-                
+                print(
+                    f"📏 Scale factors: X={processed_img_width/original_img_width:.3f}, Y={processed_img_height/original_img_height:.3f}"
+                )
+
                 # Create prompt using PROCESSED image dimensions (what AI actually sees)
-                if is_defect_query:
-                    print("🔍 Defect detection query detected - using specialized prompt with processed dimensions")
-                    analysis_prompt = self._create_defect_detection_prompt(query, processed_img_width, processed_img_height)
-                else:
-                    # Use existing intelligent analysis prompt
-                    if chat_history:
-                        analysis_prompt = f"""{self.master_prompt}
-
-🎯 CONTINUING OUR CONVERSATION:
-Based on our previous conversation, I'll analyze this image while maintaining our conversational context.
-
-YOUR CURRENT QUESTION: {query}
-
-I'll provide insights about this image while remembering our conversation history and maintaining a natural, conversational tone."""
-                    else:
-                        analysis_prompt = f"""{self.master_prompt}
-
-🎉 EXCITING IMAGE ANALYSIS OPPORTUNITY:
-Hi there! Thank you so much for sharing this image with me - I'm absolutely thrilled to analyze it for you! 
-
-YOUR QUESTION: {query}
-
-I'm going to use my intelligent detection framework to explore every fascinating detail in this image. I'll adapt my expertise based on exactly what I observe and provide you with comprehensive, engaging insights that will help you understand everything that's happening here!
-
-Let me dive in with enthusiasm and discover all the amazing things this image has to show us! 🔍✨"""
+                analysis_prompt = self._create_unified_analysis_prompt(
+                    query, processed_img_width, processed_img_height
+                )
 
                 base64_image = self.image_to_base64(processed_image)
-                
+
                 # Collect full response for defect extraction
                 full_response = ""
-                
+
                 print(f"🤖 Streaming from {self.model_name} for intelligent analysis with context...")
-                
-                async for chunk in self.analyze_single_image_with_context_stream(analysis_prompt, base64_image, 2500):
+
+                async for chunk in self.analyze_single_image_with_context_stream(
+                    analysis_prompt, base64_image, 2500
+                ):
                     full_response += chunk
-                    # Yield clean chunk (without defect data markers)
-                    if "---DEFECT_DATA_START---" not in chunk:
+                    # Yield clean chunk (without defect or object data markers)
+                    if "---DEFECT_DATA_START---" not in chunk and "---OBJECT_DATA_START---" not in chunk:
                         yield chunk
+
+                # Extract and process BOTH objects and defects from unified response
+                scale_x = original_img_width / processed_img_width
+                scale_y = original_img_height / processed_img_height
                 
-                # Process defects if this was a defect detection query
-                if is_defect_query:
-                    # Extract defects using PROCESSED image dimensions (coordinates from AI)
-                    defects = self._extract_defect_data(full_response, processed_img_width, processed_img_height)
-                    
-                    if defects:
-                        # Scale defect coordinates back to ORIGINAL image dimensions for storage
-                        # This ensures coordinates are stored relative to the original uploaded image
-                        scale_x = original_img_width / processed_img_width
-                        scale_y = original_img_height / processed_img_height
-                        
-                        scaled_defects = []
-                        for defect in defects:
-                            scaled_bbox = {
-                                'x': int(defect.bounding_box['x'] * scale_x),
-                                'y': int(defect.bounding_box['y'] * scale_y),
-                                'width': int(defect.bounding_box['width'] * scale_x),
-                                'height': int(defect.bounding_box['height'] * scale_y)
-                            }
-                            
-                            scaled_defect = DefectDetection(
-                                defect_type=defect.defect_type,
-                                confidence=defect.confidence,
-                                bounding_box=scaled_bbox,
-                                description=defect.description,
-                                severity=defect.severity
-                            )
-                            scaled_defects.append(scaled_defect)
-                            
-                            print(f"🔄 Scaled defect coordinates: {defect.bounding_box} -> {scaled_bbox}")
-                        
-                        # Store scaled coordinates (relative to original image)
-                        await self._store_defect_annotations(file_path, scaled_defects)
-                        
-                        # Send defect summary
-                        yield f"\n\n🎯 **DEFECT DETECTION COMPLETE**: Found {len(scaled_defects)} defect(s)\n"
-                        yield "💡 **Red bounding boxes will appear on the image shortly!**\n\n"
-                        
-                        # Send detailed defect list (using original coordinates)
-                        for i, defect in enumerate(scaled_defects, 1):
-                            severity_emoji = {
-                                'low': '🟡', 'medium': '🟠', 'high': '🔴', 'critical': '⛔'
-                            }.get(defect.severity, '⚠️')
-                            
-                            yield f"**{i}. {defect.defect_type.title()} {severity_emoji}**\n"
-                            yield f"   📍 Location: ({defect.bounding_box['x']}, {defect.bounding_box['y']})\n"
-                            yield f"   📏 Size: {defect.bounding_box['width']}×{defect.bounding_box['height']} px\n"
-                            yield f"   🎯 Confidence: {defect.confidence:.1%}\n"
-                            yield f"   📝 {defect.description}\n\n"
-                    else:
-                        yield "\n\n✅ **No significant defects detected** in this image!\n"
+                # Extract defects using PROCESSED image dimensions (coordinates from AI)
+                defects = self._extract_defect_data(full_response, processed_img_width, processed_img_height)
                 
+                # Extract objects using PROCESSED image dimensions (coordinates from AI)
+                objects = self._extract_object_data(full_response, processed_img_width, processed_img_height)
+                
+                # Process defects if found
+                if defects:
+                    scaled_defects = []
+                    for defect in defects:
+                        scaled_bbox = {
+                            'x': int(defect.bounding_box['x'] * scale_x),
+                            'y': int(defect.bounding_box['y'] * scale_y),
+                            'width': int(defect.bounding_box['width'] * scale_x),
+                            'height': int(defect.bounding_box['height'] * scale_y)
+                        }
+
+                        scaled_defect = DefectDetection(
+                            defect_type=defect.defect_type,
+                            confidence=defect.confidence,
+                            bounding_box=scaled_bbox,
+                            description=defect.description,
+                            severity=defect.severity
+                        )
+                        scaled_defects.append(scaled_defect)
+
+                        print(f"🔄 Scaled defect coordinates: {defect.bounding_box} -> {scaled_bbox}")
+
+                    # Store scaled coordinates (relative to original image)
+                    await self._store_defect_annotations(file_path, scaled_defects)
+
+                    # Send defect summary
+                    yield f"\n\n🎯 **DEFECT DETECTION COMPLETE**: Found {len(scaled_defects)} defect(s)\n"
+                    yield "💡 **Red bounding boxes will appear on the image shortly!**\n\n"
+
+                    # Send detailed defect list (using original coordinates)
+                    for i, defect in enumerate(scaled_defects, 1):
+                        severity_emoji = {
+                            'low': '🟡', 'medium': '🟠', 'high': '🔴', 'critical': '⛔'
+                        }.get(defect.severity, '⚠️')
+
+                        yield f"**{i}. {defect.defect_type.title()} {severity_emoji}**\n"
+                        yield f"   📍 Location: ({defect.bounding_box['x']}, {defect.bounding_box['y']})\n"
+                        yield f"   📏 Size: {defect.bounding_box['width']}×{defect.bounding_box['height']} px\n"
+                        yield f"   🎯 Confidence: {defect.confidence:.1%}\n"
+                        yield f"   📝 {defect.description}\n\n"
+                
+                # Process objects if found
+                if objects:
+                    scaled_objects = []
+                    for obj in objects:
+                        scaled_bbox = {
+                            'x': int(obj.bounding_box['x'] * scale_x),
+                            'y': int(obj.bounding_box['y'] * scale_y),
+                            'width': int(obj.bounding_box['width'] * scale_x),
+                            'height': int(obj.bounding_box['height'] * scale_y)
+                        }
+
+                        scaled_object = ObjectDetection(
+                            object_type=obj.object_type,
+                            confidence=obj.confidence,
+                            bounding_box=scaled_bbox,
+                            description=obj.description,
+                            category=obj.category
+                        )
+                        scaled_objects.append(scaled_object)
+
+                        print(f"🔄 Scaled object coordinates: {obj.bounding_box} -> {scaled_bbox}")
+
+                    # Store scaled coordinates (relative to original image)
+                    await self._store_object_annotations(file_path, scaled_objects)
+
+                    # Send object summary
+                    yield f"\n\n🎯 **OBJECT DETECTION COMPLETE**: Found {len(scaled_objects)} object(s)\n"
+                    yield "💡 **Blue bounding boxes will appear on the image shortly!**\n\n"
+
+                    # Send detailed object list (using original coordinates)
+                    for i, obj in enumerate(scaled_objects, 1):
+                        category_emoji = {
+                            'building': '🏢', 'vehicle': '🚗', 'vegetation': '🌳', 
+                            'infrastructure': '🏗️', 'water': '💧', 'road': '🛣️'
+                        }.get(obj.category, '📦')
+
+                        yield f"**{i}. {obj.object_type.title()} {category_emoji}**\n"
+                        yield f"   📂 Category: {obj.category.title()}\n"
+                        yield f"   📍 Location: ({obj.bounding_box['x']}, {obj.bounding_box['y']})\n"
+                        yield f"   📏 Size: {obj.bounding_box['width']}×{obj.bounding_box['height']} px\n"
+                        yield f"   🎯 Confidence: {obj.confidence:.1%}\n"
+                        yield f"   📝 {obj.description}\n\n"
+                
+                # Provide completion message
+                if not defects and not objects:
+                    yield "\n\n✅ **Analysis complete** - No specific objects or defects detected to highlight!\n"
+                elif defects and not objects:
+                    yield f"\n\n✅ **Analysis complete** - Found {len(defects)} defect(s) but no general objects to highlight.\n"
+                elif objects and not defects:
+                    yield f"\n\n✅ **Analysis complete** - Found {len(objects)} object(s) but no defects detected.\n"
+                else:
+                    yield f"\n\n✅ **Comprehensive analysis complete** - Found {len(objects)} object(s) and {len(defects)} defect(s)!\n"
+
                 print(f"✅ Completed streaming intelligent analysis")
-                
+
         except Exception as e:
             yield f"❌ Error processing image: {str(e)}"
+
     
     async def chat_with_context_stream(self, message: str) -> AsyncIterator[str]:
         """Handle general chat with intelligent context, persistent conversation history and streaming"""
