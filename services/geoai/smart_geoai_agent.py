@@ -131,6 +131,34 @@ class SmartGeoAIAgent:
         print(f"📋 Final formatted context: {formatted_context}")
         return formatted_context
     
+    def _get_color_mapping_description(self, index_type: str) -> str:
+        """Generate detailed color mapping description for NDVI/NDMI interpretation"""
+        if index_type.lower() == 'ndvi':
+            return """
+🎨 **NDVI COLOR MAPPING GUIDE:**
+   • **Brown (RGB: 139,69,19)**: NDVI 0.0-0.2 - Very poor/sparse vegetation, bare soil, dead vegetation
+   • **Orange (RGB: 255,165,0)**: NDVI 0.2-0.3 - Poor vegetation, stressed crops, minimal chlorophyll
+   • **Yellow (RGB: 255,255,0)**: NDVI 0.3-0.5 - Moderate vegetation, developing crops, moderate chlorophyll
+   • **Yellow-Green (RGB: 173,255,47)**: NDVI 0.5-0.7 - Good vegetation, healthy crops, good chlorophyll activity
+   • **Green (RGB: 0,255,0)**: NDVI 0.7-0.9 - Very good vegetation, vigorous crops, high chlorophyll
+   • **Dark Green (RGB: 0,100,0)**: NDVI 0.9-1.0 - Excellent vegetation, maximum biomass, peak chlorophyll
+   
+📖 **INTERPRETATION GUIDE:** Darker greens = healthier/denser vegetation, Browns/oranges = poor/stressed vegetation"""
+        
+        elif index_type.lower() == 'ndmi':
+            return """
+🎨 **NDMI COLOR MAPPING GUIDE:**
+   • **Brown (RGB: 139,69,19)**: NDMI 0.0-0.2 - Very dry conditions, severe drought stress, low moisture
+   • **Dark Orange (RGB: 255,140,0)**: NDMI 0.2-0.3 - Dry conditions, drought stress, below optimal moisture
+   • **Gold (RGB: 255,215,0)**: NDMI 0.3-0.5 - Moderate moisture, transitional conditions
+   • **Yellow (RGB: 255,255,0)**: NDMI 0.5-0.7 - Good moisture, adequate water content
+   • **Light Blue (RGB: 173,216,230)**: NDMI 0.7-0.9 - High moisture, well-hydrated vegetation
+   • **Deep Blue (RGB: 0,191,255)**: NDMI 0.9-1.0 - Very high moisture, optimal hydration, possible waterlogging
+   
+📖 **INTERPRETATION GUIDE:** Darker blues = higher moisture/better hydration, Browns/oranges = dry/drought conditions"""
+        
+        return ""
+
     async def analyze_image(self, image_path: str, question: str) -> AsyncIterator[str]:
         """Analyze single image using intelligent detection and comprehensive analysis"""
         try:
@@ -191,6 +219,115 @@ Please use this metadata context to provide more accurate and detailed analysis 
             traceback.print_exc()
             yield f"❌ Error analyzing image: {str(e)}"
     
+    async def _get_processed_image_statistics(self, file_id: str, index_type: str) -> str:
+        """Retrieve processed image statistics from database and format for LLM"""
+        try:
+            from sqlalchemy.ext.asyncio import AsyncSession
+            from sqlalchemy import select
+            from models.processed_image import ProcessedImage, ProcessedImageType
+            from core.database import get_db
+            
+            # Get database session (this is a simplified approach - in production you'd pass this)
+            # For now, we'll try to get it from the analyzer if available
+            if hasattr(self.analyzer, 'db') and self.analyzer.db:
+                db = self.analyzer.db
+            else:
+                # Fallback: return placeholder text if no DB access
+                return f"Statistical data for {index_type.upper()} is being processed..."
+            
+            # Query for the processed image
+            result = await db.execute(
+                select(ProcessedImage).where(
+                    ProcessedImage.file_id == file_id,
+                    ProcessedImage.processed_image_type == ProcessedImageType(index_type.lower())
+                )
+            )
+            processed_image = result.scalar_one_or_none()
+            
+            if not processed_image or not processed_image.processing_stats:
+                return f"No statistical data available for {index_type.upper()}"
+            
+            # Extract LLM summary from processing stats
+            llm_summary = processed_image.processing_stats.get("summary_for_llm", {})
+            statistics = processed_image.processing_stats.get("statistics", {})
+            
+            if llm_summary.get("error"):
+                return f"{index_type.upper()} Statistical Error: {llm_summary['error']}"
+            
+            # Format statistics for LLM consumption
+            stats_text = f"""
+📈 {index_type.upper()} QUANTITATIVE ANALYSIS:
+
+Overall Assessment: {llm_summary.get('overall_health', 'Unknown').replace('_', ' ').title()}
+
+Key Metrics:
+• Mean Value: {llm_summary.get('key_metrics', {}).get('mean_value', 0):.3f}
+• Value Range: {llm_summary.get('key_metrics', {}).get('range', 'Unknown')}
+• Standard Deviation: {llm_summary.get('key_metrics', {}).get('std_deviation', 0):.3f}
+• Valid Coverage: {llm_summary.get('key_metrics', {}).get('valid_coverage', 'Unknown')}
+"""
+            
+            # Add index-specific interpretations
+            interpretation = llm_summary.get('interpretation', {})
+            
+            if index_type == "ndvi":
+                vegetation_coverage = interpretation.get('vegetation_coverage', {})
+                land_use = interpretation.get('land_use_breakdown', {})
+                
+                stats_text += f"""
+Vegetation Health Distribution:
+• Healthy Vegetation: {vegetation_coverage.get('healthy_vegetation', 'Unknown')}
+• Stressed Vegetation: {vegetation_coverage.get('stressed_vegetation', 'Unknown')}
+• Health Score: {vegetation_coverage.get('health_score', 0):.3f}
+
+Land Use Classification:
+"""
+                for class_name, percentage in land_use.items():
+                    formatted_name = class_name.replace('_', ' ').title()
+                    stats_text += f"• {formatted_name}: {percentage}\n"
+                    
+            elif index_type == "ndmi":
+                moisture_status = interpretation.get('moisture_status', {})
+                moisture_dist = interpretation.get('moisture_distribution', {})
+                
+                stats_text += f"""
+Moisture Status Distribution:
+• Well Hydrated Areas: {moisture_status.get('well_hydrated', 'Unknown')}
+• Drought Stressed Areas: {moisture_status.get('drought_stress', 'Unknown')}
+• Average Moisture Score: {moisture_status.get('moisture_score', 0):.3f}
+
+Moisture Classification:
+"""
+                for class_name, percentage in moisture_dist.items():
+                    formatted_name = class_name.replace('_', ' ').title()
+                    stats_text += f"• {formatted_name}: {percentage}\n"
+            
+            # Add spatial analysis if available
+            spatial_patterns = llm_summary.get('spatial_patterns', {})
+            if spatial_patterns:
+                stats_text += f"""
+Spatial Distribution:
+• Significant Patches: {spatial_patterns.get('total_patches', 0)}
+• Average Patch Size: {spatial_patterns.get('average_patch_size', 'Unknown')}
+• Spatial Uniformity: {spatial_patterns.get('spatial_uniformity', 'Unknown').title()}
+"""
+            
+            # Add percentile data for advanced analysis
+            percentiles = statistics.get('percentiles', {})
+            if percentiles:
+                stats_text += f"""
+Statistical Percentiles (for threshold analysis):
+• 25th percentile: {percentiles.get('p25', 0):.3f}
+• 75th percentile: {percentiles.get('p75', 0):.3f}
+• 90th percentile: {percentiles.get('p90', 0):.3f}
+"""
+            
+            return stats_text.strip()
+            
+        except Exception as e:
+            print(f"[STATS] Error retrieving {index_type} statistics: {e}")
+            return f"Error retrieving {index_type.upper()} statistical data: {str(e)}"
+    
     async def chat_with_llm(self, message: str) -> AsyncIterator[str]:
         """Handle general chat using unified LangChain analyzer with intelligent context"""
         try:
@@ -205,29 +342,236 @@ Please use this metadata context to provide more accurate and detailed analysis 
             yield f"❌ Error in chat: {str(e)}"
 
     async def analyze_multiple_images(self, question: str) -> AsyncIterator[str]:
-        """Analyze multiple selected images with comprehensive comparison"""
+        """Analyze multiple selected images with comprehensive comparison including NDVI/NDMI"""
         try:
             if not self.selected_file_paths:
                 yield "❌ No images selected for analysis."
                 return
                 
-            print(f"🖼️ Starting multi-image analysis for {len(self.selected_file_paths)} images")
+            # Group images by parent file ID to organize original, NDVI, and NDMI together
+            grouped_images = {}
+            for file_key, file_info in self.selected_file_paths.items():
+                parent_id = file_info.get('parent_file_id', file_key)
+                if parent_id not in grouped_images:
+                    grouped_images[parent_id] = {}
+                
+                image_type = file_info.get('image_type', 'original')
+                grouped_images[parent_id][image_type] = {
+                    'key': file_key,
+                    'info': file_info
+                }
             
-            # For streaming, we'll analyze images sequentially and stream each result
-            yield f"🔍 MULTI-IMAGE ANALYSIS ({len(self.selected_file_paths)} images)\n\n"
+            print(f"🖼️ Starting enhanced multi-image analysis for {len(grouped_images)} file groups")
+            print(f"📊 Image breakdown: {sum(len(group) for group in grouped_images.values())} total images")
             
-            for i, (file_id, file_info) in enumerate(self.selected_file_paths.items(), 1):
-                yield f"📸 **Image {i}/{len(self.selected_file_paths)}: {file_info['filename']}**\n"
-                # (REMOVED) Metadata context output
-                # Only show image name and count
-                enhanced_question = f"""Multi-image analysis ({i}/{len(self.selected_file_paths)}): {file_info['filename']}\n\n{question}\n\nPlease provide detailed analysis for this specific image, keeping in mind this is part of a multi-image comparison."""
-                async for chunk in self.analyze_image(file_info['path'], enhanced_question):
+            # For streaming, we'll analyze image groups and provide combined analysis
+            yield f"🔍 **COMPREHENSIVE MULTI-IMAGE ANALYSIS**\n"
+            yield f"📊 **Analyzing {len(grouped_images)} file groups with enhanced agricultural intelligence**\n\n"
+            
+            for group_idx, (parent_id, image_group) in enumerate(grouped_images.items(), 1):
+                # Get the original filename for group header
+                original_info = image_group.get('original', {}).get('info', {})
+                group_name = original_info.get('filename', f"File Group {group_idx}").replace(" (Original)", "")
+                
+                yield f"📸 **ANALYSIS {group_idx}/{len(grouped_images)}: {group_name}**\n"
+                
+                # Show available image types in this group
+                available_types = []
+                if 'original' in image_group:
+                    available_types.append("Original")
+                if 'ndvi' in image_group:
+                    available_types.append("NDVI")
+                if 'ndmi' in image_group:
+                    available_types.append("NDMI")
+                
+                yield f"🔍 **Processing imagery**: {', '.join(available_types)}\n\n"
+                
+                # Collect analysis results from all image types
+                analysis_results = {}
+                image_paths_for_combined = []
+                
+                # Process images quietly to collect data
+                for image_type in ['original', 'ndvi', 'ndmi']:
+                    if image_type in image_group:
+                        image_data = image_group[image_type]
+                        file_info = image_data['info']
+                        image_paths_for_combined.append({
+                            'path': file_info['path'],
+                            'type': image_type,
+                            'filename': file_info['filename']
+                        })
+                        
+                        print(f"[COMBINED ANALYSIS] Processing {image_type} image: {file_info['filename']}")
+                        
+                        # Create specific analysis question for data collection
+                        if image_type == 'original':
+                            analysis_question = f"""Analyze this original agricultural image focusing on:
+1. Visible crop conditions and health
+2. Field structure and layout
+3. Any equipment or infrastructure
+4. Potential defects or issues
+5. Object detection for all visible elements
+
+Provide detailed technical analysis for data collection purposes."""
+                        elif image_type == 'ndvi':
+                            color_guide = self._get_color_mapping_description('ndvi')
+                            analysis_question = f"""Analyze this NDVI (vegetation index) image with professional color mapping:
+
+{color_guide}
+
+**Analysis Focus:**
+1. Vegetation health patterns using the specific color meanings above
+2. Biomass distribution across different color zones
+3. Areas of concern or stress (browns/oranges indicate problems)
+4. Growth uniformity and spatial patterns
+5. Agricultural insights based on precise color-to-value relationships
+
+**Important:** Reference specific colors and their corresponding NDVI values/meanings in your analysis. Use the RGB values and NDVI ranges provided above to give precise interpretations."""
+                        elif image_type == 'ndmi':
+                            color_guide = self._get_color_mapping_description('ndmi')
+                            analysis_question = f"""Analyze this NDMI (moisture index) image with professional color mapping:
+
+{color_guide}
+
+**Analysis Focus:**
+1. Moisture content patterns using the specific color meanings above
+2. Irrigation effectiveness across different color zones
+3. Water stress indicators (browns/oranges indicate drought)
+4. Soil moisture distribution and spatial patterns
+5. Drought or waterlogging areas based on color zones
+
+**Important:** Reference specific colors and their corresponding NDMI values/meanings in your analysis. Use the RGB values and NDMI ranges provided above to give precise moisture interpretations."""
+                        
+                        # Collect analysis result silently
+                        individual_result = ""
+                        async for chunk in self.analyze_image(file_info['path'], analysis_question):
+                            individual_result += chunk
+                        
+                        analysis_results[image_type] = individual_result
+                        print(f"[COMBINED ANALYSIS] Collected {len(individual_result)} characters from {image_type}")
+                
+                # Now create comprehensive combined analysis
+                yield "🧠 **Generating comprehensive analysis...**\n\n"
+                
+                # Extract key insights and statistics without full individual analyses
+                statistical_data = {}
+                color_guides = {}
+                defect_data = []
+                
+                # Process each image type to extract essential data only
+                if 'ndvi' in analysis_results:
+                    ndvi_stats_text = await self._get_processed_image_statistics(image_group['ndvi']['info']['parent_file_id'], 'ndvi')
+                    ndvi_color_guide = self._get_color_mapping_description('ndvi')
+                    statistical_data['ndvi'] = ndvi_stats_text
+                    color_guides['ndvi'] = ndvi_color_guide
+                    
+                    # Extract defects from NDVI analysis
+                    ndvi_analysis = analysis_results['ndvi']
+                    defect_start = ndvi_analysis.find("---DEFECT_DATA_START---")
+                    defect_end = ndvi_analysis.find("---DEFECT_DATA_END---")
+                    if defect_start != -1 and defect_end != -1:
+                        defect_section = ndvi_analysis[defect_start:defect_end + len("---DEFECT_DATA_END---")]
+                        defect_data.append(defect_section)
+                
+                if 'ndmi' in analysis_results:
+                    ndmi_stats_text = await self._get_processed_image_statistics(image_group['ndmi']['info']['parent_file_id'], 'ndmi')
+                    ndmi_color_guide = self._get_color_mapping_description('ndmi')
+                    statistical_data['ndmi'] = ndmi_stats_text
+                    color_guides['ndmi'] = ndmi_color_guide
+                    
+                    # Extract defects from NDMI analysis
+                    ndmi_analysis = analysis_results['ndmi']
+                    defect_start = ndmi_analysis.find("---DEFECT_DATA_START---")
+                    defect_end = ndmi_analysis.find("---DEFECT_DATA_END---")
+                    if defect_start != -1 and defect_end != -1:
+                        defect_section = ndmi_analysis[defect_start:defect_end + len("---DEFECT_DATA_END---")]
+                        defect_data.append(defect_section)
+                
+                if 'original' in analysis_results:
+                    # Extract defects from original analysis
+                    original_analysis = analysis_results['original']
+                    defect_start = original_analysis.find("---DEFECT_DATA_START---")
+                    defect_end = original_analysis.find("---DEFECT_DATA_END---")
+                    if defect_start != -1 and defect_end != -1:
+                        defect_section = original_analysis[defect_start:defect_end + len("---DEFECT_DATA_END---")]
+                        defect_data.append(defect_section)
+                
+                # Create streamlined combined analysis prompt
+                combined_prompt = f"""UNIFIED AGRICULTURAL INTELLIGENCE ANALYSIS
+
+USER QUESTION: {question}
+
+CONTEXT: I have analyzed this agricultural image using three different methods:
+- Original Visual Analysis: Crop conditions, field structure, visible issues
+- NDVI Analysis: Vegetation health and biomass distribution  
+- NDMI Analysis: Moisture content and irrigation effectiveness
+
+STATISTICAL DATA AVAILABLE:
+"""
+                
+                if 'ndvi' in statistical_data:
+                    combined_prompt += f"""
+🌱 NDVI STATISTICS & COLOR MAPPING:
+{statistical_data['ndvi']}
+
+{color_guides['ndvi']}
+"""
+                
+                if 'ndmi' in statistical_data:
+                    combined_prompt += f"""
+💧 NDMI STATISTICS & COLOR MAPPING:
+{statistical_data['ndmi']}
+
+{color_guides['ndmi']}
+"""
+                
+                combined_prompt += f"""
+DETECTED ISSUES:
+{chr(10).join(defect_data) if defect_data else "No critical defects detected in preliminary analysis."}
+
+TASK: Create ONE comprehensive agricultural analysis that synthesizes all available data sources.
+
+REQUIREMENTS:
+1. **Single Unified Response** - Do not create separate sections for each image type
+2. **Professional Agricultural Assessment** - Focus on practical farming insights
+3. **Statistical Integration** - Reference specific percentages and classifications from the data
+4. **Color-Based Insights** - Use the color mapping guides to interpret vegetation and moisture patterns
+5. **Defect Analysis** - Include any detected issues with proper bounding box format
+6. **Actionable Recommendations** - Provide specific steps for crop management
+
+RESPONSE STRUCTURE:
+- **Comprehensive Agricultural Analysis**: Combined insights from visual + NDVI + NDMI data
+- **Statistical Insights**: Key metrics and classifications with percentages
+- **Defect Detection**: Any issues found with locations (maintain ---DEFECT_DATA_START--- format)
+- **Recommendations**: Specific agricultural actions based on the complete analysis
+
+Create a professional, data-driven response that provides maximum value to farmers by combining all analysis perspectives into actionable intelligence."""
+                
+
+
+                # Generate combined analysis using the unified analyzer
+                async for chunk in self.analyzer.chat_with_context_stream(combined_prompt):
                     yield chunk
-                if i < len(self.selected_file_paths):
-                    yield "\n\n---\n\n"
-            yield f"\n\n🎯 **MULTI-IMAGE ANALYSIS COMPLETE**\nAnalyzed {len(self.selected_file_paths)} images successfully!"
+                
+                if group_idx < len(grouped_images):
+                    yield "\n\n" + "="*50 + "\n\n"
+            
+            # Final summary
+            total_images = sum(len(group) for group in grouped_images.values())
+            total_ndvi = sum(1 for group in grouped_images.values() if 'ndvi' in group)
+            total_ndmi = sum(1 for group in grouped_images.values() if 'ndmi' in group)
+            
+            yield f"\n\n🎯 **COMPREHENSIVE ANALYSIS COMPLETE**\n"
+            yield f"📊 **Data Sources Used:**\n"
+            yield f"   • File groups analyzed: {len(grouped_images)}\n"
+            yield f"   • Total images processed: {total_images}\n"
+            yield f"   • Visual data (Original): {len(grouped_images)}\n"
+            yield f"   • Vegetation data (NDVI): {total_ndvi}\n"
+            yield f"   • Moisture data (NDMI): {total_ndmi}\n"
+            yield f"\n🚀 **Enhanced agricultural intelligence combining visual, vegetation health, and moisture analysis!**"
+            
         except Exception as e:
-            print(f"❌ Error in multi-image analysis: {str(e)}")
+            print(f"❌ Error in comprehensive multi-image analysis: {str(e)}")
             yield f"❌ Error analyzing multiple images: {str(e)}"
 
     async def process_message(self, user_input: str) -> AsyncIterator[str]:
@@ -260,20 +604,38 @@ Please use this metadata context to provide more accurate and detailed analysis 
         if has_current_image or has_selected_files:
             print(f"🔍 Images available - using IMAGE ANALYSIS mode")
             
-            # Choose between single or multi-image analysis
-            if has_selected_files and len(self.selected_file_paths) > 1:
-                print(f"🔍 Multi-image analysis for {len(self.selected_file_paths)} images")
+            # Check if we have multiple image types for enhanced analysis
+            if has_selected_files:
+                # Group images by parent file ID to check for multiple image types
+                grouped_images = {}
+                for file_key, file_info in self.selected_file_paths.items():
+                    parent_id = file_info.get('parent_file_id', file_key)
+                    if parent_id not in grouped_images:
+                        grouped_images[parent_id] = {}
+                    
+                    image_type = file_info.get('image_type', 'original')
+                    grouped_images[parent_id][image_type] = {
+                        'key': file_key,
+                        'info': file_info
+                    }
+                
+                # Check if we have multiple files OR multiple image types for any file
+                has_multiple_groups = len(grouped_images) > 1
+                has_multiple_types = any(len(group) > 1 for group in grouped_images.values())
+                
+                if has_multiple_groups or has_multiple_types:
+                    print(f"🔍 Enhanced multi-image analysis: {len(grouped_images)} groups, enhanced types: {has_multiple_types}")
                 async for chunk in self.analyze_multiple_images(question):
                     yield chunk
+                else:
+                    # Single file, single image type - use traditional analysis
+                    file_info = list(self.selected_file_paths.values())[0]
+                    print(f"🔍 Single image analysis: {file_info['filename']}")
+                    async for chunk in self.analyze_image(file_info['path'], question):
+                        yield chunk
             elif has_current_image:
-                print(f"🔍 Single image analysis: {self.current_image}")
+                print(f"🔍 Current image analysis: {self.current_image}")
                 async for chunk in self.analyze_image(self.current_image, question):
-                    yield chunk
-            elif has_selected_files:
-                # Single selected file
-                file_info = list(self.selected_file_paths.values())[0]
-                print(f"🔍 Single selected file analysis: {file_info['filename']}")
-                async for chunk in self.analyze_image(file_info['path'], question):
                     yield chunk
             else:
                 yield "❌ Error: No valid images found for analysis."

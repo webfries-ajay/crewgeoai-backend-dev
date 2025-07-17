@@ -19,8 +19,10 @@ from models.annotation import Annotation
 from services.file_service import file_service
 from services.background_upload_service import background_upload_service
 from services.project_service import ProjectService
+from services import processed_images_service
 from schemas.file import FileResponse, FileListResponse, FileUploadResponse, UploadSessionResponse
 from models.file_metadata import FileMetadata
+from models.processed_image import ProcessedImage
 # GeoAI imports moved to the endpoint to handle missing dependencies gracefully
 
 # Configure logger
@@ -32,6 +34,7 @@ print("FILES ROUTER LOADED!")
 
 # Global GeoAI agent instance for conversation continuity
 geoai_agents = {}
+
 
 @router.post("/upload/{project_id}", response_model=FileUploadResponse)
 async def upload_files(
@@ -578,7 +581,7 @@ async def chat_with_geoai(
         
         if not text_only:
             if selected_file_ids and len(selected_file_ids) > 0:
-                # Multi-image analysis: get paths and metadata for all selected files
+                # Multi-image analysis: get paths and metadata for all selected files + their NDMI/NDVI
                 print(f"[GeoAI DEBUG] Getting file paths and metadata for {len(selected_file_ids)} selected files")
                 for file_id_item in selected_file_ids:
                     try:
@@ -591,12 +594,47 @@ async def chat_with_geoai(
                             # Get file info for the path
                             db_file_item = await db.get(File, file_id_item)
                             if db_file_item:
-                                file_paths[file_id_item] = {
+                                # Add original image
+                                original_key = f"{file_id_item}_original"
+                                file_paths[original_key] = {
                                     'path': str(file_path),
-                                    'filename': db_file_item.original_filename
+                                    'filename': f"{db_file_item.original_filename} (Original)",
+                                    'image_type': 'original',
+                                    'parent_file_id': file_id_item
                                 }
                                 
-                                # Fetch metadata for this file
+                                # Try to get NDVI and NDMI processed images
+                                try:
+                                    processed_images = await processed_images_service.get_processed_images_for_file(file_id_item, db)
+                                    
+                                    if processed_images and not processed_images.get("error"):
+                                        # Add NDVI image if available
+                                        if processed_images.get("ndvi"):
+                                            ndvi_info = processed_images["ndvi"]
+                                            ndvi_key = f"{file_id_item}_ndvi"
+                                            file_paths[ndvi_key] = {
+                                                'path': ndvi_info['path'],
+                                                'filename': f"{db_file_item.original_filename} (NDVI)",
+                                                'image_type': 'ndvi',
+                                                'parent_file_id': file_id_item
+                                            }
+                                            print(f"[GeoAI DEBUG] Added NDVI image: {ndvi_info['filename']}")
+                                        
+                                        # Add NDMI image if available
+                                        if processed_images.get("ndmi"):
+                                            ndmi_info = processed_images["ndmi"]
+                                            ndmi_key = f"{file_id_item}_ndmi"
+                                            file_paths[ndmi_key] = {
+                                                'path': ndmi_info['path'],
+                                                'filename': f"{db_file_item.original_filename} (NDMI)",
+                                                'image_type': 'ndmi',
+                                                'parent_file_id': file_id_item
+                                            }
+                                            print(f"[GeoAI DEBUG] Added NDMI image: {ndmi_info['filename']}")
+                                except Exception as processed_error:
+                                    print(f"[GeoAI DEBUG] Could not fetch processed images for {file_id_item}: {str(processed_error)}")
+                                
+                                # Fetch metadata for this file (only once per original file)
                                 try:
                                     metadata_query = await db.execute(
                                         select(FileMetadata).where(FileMetadata.file_id == file_id_item)
@@ -624,30 +662,70 @@ async def chat_with_geoai(
                                             'extraction_confidence': metadata_result.extraction_confidence,
                                             'processed_metadata': metadata_result.processed_metadata
                                         }
-                                        file_metadata[file_id_item] = metadata_dict
+                                        # Share metadata across all image types for this file
+                                        file_metadata[original_key] = metadata_dict
+                                        if f"{file_id_item}_ndvi" in file_paths:
+                                            file_metadata[f"{file_id_item}_ndvi"] = metadata_dict
+                                        if f"{file_id_item}_ndmi" in file_paths:
+                                            file_metadata[f"{file_id_item}_ndmi"] = metadata_dict
                                         print(f"[GeoAI DEBUG] Added metadata for: {db_file_item.original_filename}")
                                     else:
                                         print(f"[GeoAI DEBUG] No metadata found for: {db_file_item.original_filename}")
-                                        file_metadata[file_id_item] = None
+                                        file_metadata[original_key] = None
                                 except Exception as metadata_error:
                                     print(f"[GeoAI DEBUG] Error fetching metadata for {file_id_item}: {str(metadata_error)}")
-                                    file_metadata[file_id_item] = None
+                                    file_metadata[original_key] = None
                                 
                                 print(f"[GeoAI DEBUG] Added file path: {db_file_item.original_filename}")
                     except Exception as e:
                         print(f"[GeoAI DEBUG] Warning: Could not get path for file {file_id_item}: {str(e)}")
             else:
-                # Single image analysis: get path and metadata for primary file
+                # Single image analysis: get path and metadata for primary file + its NDMI/NDVI
                 file_path = await file_service.get_file_path(
                     file_id=file_id,
                     user_id=str(current_user.id),
                     db=db
                 )
                 if file_path:
-                    file_paths[file_id] = {
+                    # Add original image
+                    original_key = f"{file_id}_original"
+                    file_paths[original_key] = {
                         'path': str(file_path),
-                        'filename': db_file.original_filename
+                        'filename': f"{db_file.original_filename} (Original)",
+                        'image_type': 'original',
+                        'parent_file_id': file_id
                     }
+                    
+                    # Try to get NDVI and NDMI processed images
+                    try:
+                        processed_images = await processed_images_service.get_processed_images_for_file(file_id, db)
+                        
+                        if processed_images and not processed_images.get("error"):
+                            # Add NDVI image if available
+                            if processed_images.get("ndvi"):
+                                ndvi_info = processed_images["ndvi"]
+                                ndvi_key = f"{file_id}_ndvi"
+                                file_paths[ndvi_key] = {
+                                    'path': ndvi_info['path'],
+                                    'filename': f"{db_file.original_filename} (NDVI)",
+                                    'image_type': 'ndvi',
+                                    'parent_file_id': file_id
+                                }
+                                print(f"[GeoAI DEBUG] Added NDVI image: {ndvi_info['filename']}")
+                            
+                            # Add NDMI image if available
+                            if processed_images.get("ndmi"):
+                                ndmi_info = processed_images["ndmi"]
+                                ndmi_key = f"{file_id}_ndmi"
+                                file_paths[ndmi_key] = {
+                                    'path': ndmi_info['path'],
+                                    'filename': f"{db_file.original_filename} (NDMI)",
+                                    'image_type': 'ndmi',
+                                    'parent_file_id': file_id
+                                }
+                                print(f"[GeoAI DEBUG] Added NDMI image: {ndmi_info['filename']}")
+                    except Exception as processed_error:
+                        print(f"[GeoAI DEBUG] Could not fetch processed images for {file_id}: {str(processed_error)}")
                     
                     # Fetch metadata for primary file
                     try:
@@ -676,15 +754,20 @@ async def chat_with_geoai(
                                 'extraction_confidence': metadata_result.extraction_confidence,
                                 'processed_metadata': metadata_result.processed_metadata
                             }
-                            file_metadata[file_id] = metadata_dict
+                            # Share metadata across all image types
+                            file_metadata[original_key] = metadata_dict
+                            if f"{file_id}_ndvi" in file_paths:
+                                file_metadata[f"{file_id}_ndvi"] = metadata_dict
+                            if f"{file_id}_ndmi" in file_paths:
+                                file_metadata[f"{file_id}_ndmi"] = metadata_dict
                             print(f"[GeoAI DEBUG] Added metadata for primary file: {db_file.original_filename}")
                             print(f"[GeoAI DEBUG] Metadata content: {metadata_dict}")
                         else:
                             print(f"[GeoAI DEBUG] No metadata found for primary file: {db_file.original_filename}")
-                            file_metadata[file_id] = None
+                            file_metadata[original_key] = None
                     except Exception as metadata_error:
                         print(f"[GeoAI DEBUG] Error fetching metadata for primary file: {str(metadata_error)}")
-                        file_metadata[file_id] = None
+                        file_metadata[original_key] = None
         else:
             print(f"[GeoAI DEBUG] Text-only mode: skipping file path and metadata resolution")
         
@@ -1016,4 +1099,177 @@ async def get_file_objects(
         raise
     except Exception as e:
         logger.error(f"Error getting file objects: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error") 
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/{file_id}/processed-images")
+async def get_processed_images(
+    file_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get processed images (NDMI, NDVI) for a specific file.
+    
+    This endpoint returns NDMI and NDVI processed images with their thumbnails.
+    """
+    print(f"[PROCESSED IMAGES DEBUG] === REQUEST START ===")
+    print(f"[PROCESSED IMAGES DEBUG] file_id: {file_id}")
+    print(f"[PROCESSED IMAGES DEBUG] user_id: {current_user.id}")
+    
+    try:
+        # Get file details first to ensure user has access
+        print(f"[PROCESSED IMAGES DEBUG] Getting file details...")
+        file_details = await file_service.get_file_details(file_id, str(current_user.id), db)
+        if not file_details:
+            print(f"[PROCESSED IMAGES DEBUG] ❌ File not found or unauthorized for file_id={file_id}")
+            raise HTTPException(status_code=404, detail="File not found")
+        
+        print(f"[PROCESSED IMAGES DEBUG] ✅ File details found: {file_details.get('original_filename')}")
+        
+        # Get processed images
+        print(f"[PROCESSED IMAGES DEBUG] Calling processed_images_service.get_processed_images_for_file...")
+        processed_images = await processed_images_service.get_processed_images_for_file(file_id, db)
+        print(f"[PROCESSED IMAGES DEBUG] Raw result from service: {processed_images}")
+        
+        if isinstance(processed_images, dict) and processed_images.get("error"):
+            print(f"[PROCESSED IMAGES DEBUG] ❌ Error from service: {processed_images['error']}")
+            raise HTTPException(status_code=404, detail=processed_images["error"])
+        
+        # Ensure both ndmi and ndvi keys exist and are null if not present
+        ndmi = processed_images.get("ndmi") if processed_images else None
+        ndvi = processed_images.get("ndvi") if processed_images else None
+        
+        print(f"[PROCESSED IMAGES DEBUG] NDMI result: {ndmi}")
+        print(f"[PROCESSED IMAGES DEBUG] NDVI result: {ndvi}")
+        
+        result = {
+            "success": True,
+            "file_id": file_id,
+            "original_filename": file_details.get("original_filename"),
+            "processed_images": {
+                "ndmi": ndmi,
+                "ndvi": ndvi
+            }
+        }
+        
+        print(f"[PROCESSED IMAGES DEBUG] ✅ Final response: {result}")
+        print(f"[PROCESSED IMAGES DEBUG] === REQUEST END ===")
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"[PROCESSED IMAGES DEBUG] ❌ Exception: {type(e).__name__}: {e}")
+        import traceback
+        print(f"[PROCESSED IMAGES DEBUG] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail="Failed to get processed images") 
+
+@router.get("/view-processed/{processed_image_id}")
+async def view_processed_image(
+    processed_image_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Stream a processed image (NDVI/NDMI) by its ProcessedImage ID, with access control.
+    """
+    from fastapi.responses import StreamingResponse
+    import aiofiles
+    from pathlib import Path
+    from sqlalchemy import select
+
+    # Look up processed image
+    result = await db.execute(select(ProcessedImage).where(ProcessedImage.id == processed_image_id))
+    processed = result.scalar_one_or_none()
+    if not processed:
+        raise HTTPException(status_code=404, detail="Processed image not found")
+
+    # Check access: join to parent file and project
+    parent_file_id = processed.file_id
+    file_result = await db.execute(select(File).where(File.id == parent_file_id))
+    parent_file = file_result.scalar_one_or_none()
+    if not parent_file:
+        raise HTTPException(status_code=404, detail="Parent file not found")
+    # Check user access to project
+    project_result = await db.execute(select(Project).where(Project.id == parent_file.project_id))
+    project = project_result.scalar_one_or_none()
+    if not project or (project.owner_id != current_user.id and parent_file.user_id != current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Stream file
+    file_path = Path(processed.processed_image_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    async def file_streamer():
+        async with aiofiles.open(file_path, 'rb') as f:
+            while chunk := await f.read(8192):
+                yield chunk
+
+    # Guess content type based on file extension
+    if file_path.suffix.lower() in ['.tif', '.tiff']:
+        content_type = 'image/tiff'
+    else:
+        content_type = 'image/jpeg'
+    
+    filename = processed.processed_filename or file_path.name
+    file_size = file_path.stat().st_size
+
+    return StreamingResponse(
+        file_streamer(),
+        media_type=content_type,
+        headers={
+            "Content-Disposition": f"inline; filename=\"{filename}\"",
+            "Cache-Control": "public, max-age=3600",
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes"
+        }
+    )
+
+@router.get("/processed-thumbnail/{processed_image_id}")
+async def get_processed_image_thumbnail(
+    processed_image_id: str,
+    size: str = Query("medium", description="Thumbnail size: small, medium, large"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get thumbnail for a processed image (NDVI/NDMI) by its ProcessedImage ID.
+    
+    - **processed_image_id**: ID of the processed image
+    - **size**: Thumbnail size (small, medium, large)
+    """
+    from fastapi.responses import FileResponse
+    from pathlib import Path
+    from sqlalchemy import select
+
+    # Look up processed image
+    result = await db.execute(select(ProcessedImage).where(ProcessedImage.id == processed_image_id))
+    processed = result.scalar_one_or_none()
+    if not processed:
+        raise HTTPException(status_code=404, detail="Processed image not found")
+
+    # Check access: join to parent file and project
+    parent_file_id = processed.file_id
+    file_result = await db.execute(select(File).where(File.id == parent_file_id))
+    parent_file = file_result.scalar_one_or_none()
+    if not parent_file:
+        raise HTTPException(status_code=404, detail="Parent file not found")
+    
+    # Check user access to project
+    project_result = await db.execute(select(Project).where(Project.id == parent_file.project_id))
+    project = project_result.scalar_one_or_none()
+    if not project or (project.owner_id != current_user.id and parent_file.user_id != current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    # Find thumbnail file
+    processed_path = Path(processed.processed_image_path)
+    thumb_dir = processed_path.parent / "thumbnails"
+    stem = processed_path.stem
+    thumb_path = thumb_dir / f"{stem}_{size}.jpg"
+    
+    if not thumb_path.exists():
+        raise HTTPException(status_code=404, detail=f"Thumbnail ({size}) not found")
+
+    return FileResponse(path=thumb_path, media_type="image/jpeg") 
