@@ -207,7 +207,6 @@ Thumbs.db
 *.pt
 *.pth
 *.onnx
-models/
 checkpoints/
 
 # Conversation history (if contains sensitive data)
